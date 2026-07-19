@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUTA — App del conductor</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg:#14171C; --card:#1C2127; --card2:#242A34; --border:#2A303B;
+    --amber:#FF9E2C; --green:#33C17A; --red:#E5484D; --text:#F2EFE9; --muted:#8B93A3;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
+  html,body { height:100%; background:var(--bg); color:var(--text); }
+  #app { height:100%; display:flex; flex-direction:column; }
+
+  header { padding:14px 16px; border-bottom:1px solid var(--border); }
+  .brand { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .brand .mark { width:26px; height:26px; border-radius:7px; background:var(--amber); display:flex; align-items:center; justify-content:center; font-weight:900; color:var(--bg); font-size:13px; }
+  .brand b { font-weight:900; font-size:15px; letter-spacing:-0.02em; }
+  .progress-row { display:flex; justify-content:space-between; align-items:center; font-size:12.5px; color:var(--muted); margin-bottom:6px; }
+  .progress-row b { color:var(--text); }
+  .bar { height:6px; border-radius:3px; background:var(--border); overflow:hidden; }
+  .bar-fill { height:100%; background:var(--amber); transition:width .4s; }
+
+  #map { height:220px; width:100%; filter: saturate(0.6) brightness(0.85); }
+
+  #list { flex:1; overflow-y:auto; padding:12px 16px; }
+  .stop { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px; border-radius:12px; border:1px solid var(--border); background:var(--card); margin-bottom:8px; }
+  .stop.active { border-color:var(--amber); background:var(--card2); }
+  .stop .dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .stop-info { flex:1; min-width:0; }
+  .stop-info .name { font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stop-info .addr { font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .badge { font-size:10px; font-weight:700; text-transform:uppercase; padding:3px 8px; border-radius:20px; white-space:nowrap; }
+
+  .actions { display:flex; gap:8px; margin-top:8px; }
+  .btn { flex:1; padding:9px; border-radius:8px; font-size:12.5px; font-weight:700; border:none; }
+  .btn-deliver { background:var(--green); color:#0E1712; }
+  .btn-fail { background:transparent; color:var(--red); border:1px solid var(--red); }
+
+  #status-msg { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--text); color:var(--bg); font-size:13px; font-weight:600; padding:9px 16px; border-radius:20px; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #status-msg.show { opacity:1; }
+  #loading { padding:40px 16px; text-align:center; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><div class="mark">R</div><b>RUTA</b></div>
+    <div class="progress-row"><span>Progreso de hoy</span><span><b id="done-count">0</b> de <b id="total-count">0</b></span></div>
+    <div class="bar"><div class="bar-fill" id="bar-fill" style="width:0%"></div></div>
+  </header>
+
+  <div id="map"></div>
+
+  <div id="list"><div id="loading">Cargando entregas de Supabase…</div></div>
+</div>
+<div id="status-msg"></div>
+
+<script>
+const SUPABASE_URL = "https://zvuoxvvauxfluhimylfz.supabase.co";
+const SUPABASE_KEY = "sb_publishable_66RQoNajgb8VjMLKcj6mwA_Yf_QlRwg";
+const DRIVER_ID = "22222222-2222-2222-2222-222222222221"; // Carlos Méndez (demo)
+
+const headers = {
+  apikey: SUPABASE_KEY,
+  Authorization: "Bearer " + SUPABASE_KEY,
+  "Content-Type": "application/json",
+  Prefer: "return=representation"
+};
+
+const STATUS_META = {
+  pendiente:  { color:"#4A5262", bg:"rgba(139,147,163,0.12)", fg:"#9AA3B2", label:"Pendiente" },
+  en_camino:  { color:"#FF9E2C", bg:"rgba(255,158,44,0.12)",  fg:"#FF9E2C", label:"En camino" },
+  entregado:  { color:"#33C17A", bg:"rgba(51,193,122,0.12)",  fg:"#33C17A", label:"Entregado" },
+  fallido:    { color:"#E5484D", bg:"rgba(229,72,77,0.12)",   fg:"#E5484D", label:"Fallido" }
+};
+
+let map, markers = [], routeLine, stops = [];
+
+function initMap() {
+  map = L.map('map', { zoomControl:false, attributionControl:false }).setView([25.77, -80.25], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+}
+
+function toast(msg) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+async function loadDeliveries() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/deliveries?driver_id=eq.${DRIVER_ID}&order=sequence.asc`,
+    { headers }
+  );
+  if (!res.ok) {
+    document.getElementById('list').innerHTML = '<div id="loading">No se pudo conectar a Supabase. Revisa las políticas de la tabla.</div>';
+    return;
+  }
+  stops = await res.json();
+  render();
+}
+
+function render() {
+  const done = stops.filter(s => s.status === 'entregado').length;
+  document.getElementById('done-count').textContent = done;
+  document.getElementById('total-count').textContent = stops.length;
+  document.getElementById('bar-fill').style.width = stops.length ? (done/stops.length*100) + '%' : '0%';
+
+  // Map markers + route line
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  if (routeLine) map.removeLayer(routeLine);
+
+  const coords = [];
+  stops.forEach(s => {
+    if (s.latitude == null || s.longitude == null) return;
+    const meta = STATUS_META[s.status] || STATUS_META.pendiente;
+    const marker = L.circleMarker([s.latitude, s.longitude], {
+      radius: 8, color: meta.color, fillColor: meta.color, fillOpacity: 0.9, weight: 2
+    }).addTo(map).bindPopup(`<b>${s.stop_name}</b><br>${s.address}`);
+    markers.push(marker);
+    coords.push([s.latitude, s.longitude]);
+  });
+  if (coords.length > 1) {
+    routeLine = L.polyline(coords, { color: '#FF9E2C', weight: 3, opacity: 0.6, dashArray: '6 6' }).addTo(map);
+  }
+  if (coords.length) map.fitBounds(coords, { padding: [24,24] });
+
+  // List
+  const activeId = (stops.find(s => s.status === 'en_camino') || stops.find(s => s.status === 'pendiente'))?.id;
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  stops.forEach(s => {
+    const meta = STATUS_META[s.status] || STATUS_META.pendiente;
+    const div = document.createElement('div');
+    div.className = 'stop' + (s.id === activeId ? ' active' : '');
+    div.innerHTML = `
+      <div class="dot" style="background:${meta.color}"></div>
+      <div class="stop-info">
+        <div class="name">${s.stop_name}</div>
+        <div class="addr">${s.address}${s.special_note ? ' · ' + s.special_note : ''}</div>
+        ${s.status === 'pendiente' || s.status === 'en_camino' ? `
+          <div class="actions">
+            <button class="btn btn-deliver" onclick="updateStatus('${s.id}','entregado')">✓ Entregado</button>
+            <button class="btn btn-fail" onclick="updateStatus('${s.id}','fallido')">✕ Fallido</button>
+          </div>` : ''}
+      </div>
+      <span class="badge" style="background:${meta.bg};color:${meta.fg}">${meta.label}</span>
+    `;
+    list.appendChild(div);
+  });
+}
+
+async function updateStatus(id, status) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/deliveries?id=eq.${id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status })
+  });
+  if (res.ok) {
+    toast(status === 'entregado' ? 'Entrega confirmada ✓' : 'Marcado como fallido');
+    await loadDeliveries();
+  } else {
+    toast('Error al actualizar — revisa la conexión');
+  }
+}
+window.updateStatus = updateStatus;
+
+initMap();
+loadDeliveries();
+setInterval(loadDeliveries, 15000); // refresca cada 15s, simula tiempo real
+</script>
+</body>
+</html>

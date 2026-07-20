@@ -12,7 +12,18 @@
   }
   * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
   html,body { height:100%; background:var(--bg); color:var(--text); }
-  #app { height:100%; display:flex; flex-direction:column; }
+  #login-screen { height:100%; display:flex; align-items:center; justify-content:center; padding:0 24px; }
+  #login-screen.hide { display:none; }
+  .login-box { width:100%; max-width:300px; }
+  .login-box label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin-bottom:6px; margin-top:16px; }
+  .login-box input { width:100%; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:14px; color:var(--text); outline:none; }
+  .login-box input:focus { border-color:var(--amber); }
+  .login-box button { width:100%; margin-top:24px; padding:12px; border-radius:8px; background:var(--amber); color:var(--bg); font-weight:700; font-size:14px; border:none; }
+  .login-box button:disabled { opacity:0.6; }
+  .login-error { color:var(--red); font-size:12px; margin-top:10px; display:none; }
+  .login-error.show { display:block; }
+  #app { display:none; height:100%; flex-direction:column; }
+  #app.show { display:flex; }
 
   header { padding:14px 16px; border-bottom:1px solid var(--border); }
   .brand { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
@@ -68,6 +79,24 @@
 </style>
 </head>
 <body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <div class="brand"><div class="mark">R</div><b>RUTA</b></div>
+    <p style="color:var(--muted);font-size:13px;margin-top:2px">Acceso de conductor</p>
+
+    <label>Correo</label>
+    <input id="login-email" type="email" placeholder="tucorreo@rutaapp.com" autocomplete="username">
+
+    <label>Contraseña</label>
+    <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+
+    <div class="login-error" id="login-error"></div>
+
+    <button id="login-btn" onclick="login()">Iniciar sesión</button>
+  </div>
+</div>
+
 <div id="app">
   <header>
     <div class="brand"><div class="mark">R</div><b>RUTA</b></div>
@@ -95,14 +124,65 @@
 <script>
 const SUPABASE_URL = "https://zvuoxvvauxfluhimylfz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_66RQoNajgb8VjMLKcj6mwA_Yf_QlRwg";
-const DRIVER_ID = "22222222-2222-2222-2222-222222222221"; // Carlos Méndez (demo)
 
-const headers = {
+let DRIVER_ID = null;
+let accessToken = null;
+
+let headers = {
   apikey: SUPABASE_KEY,
   Authorization: "Bearer " + SUPABASE_KEY,
   "Content-Type": "application/json",
   Prefer: "return=representation"
 };
+
+async function login() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  errEl.classList.remove('show');
+
+  if (!email || !password) {
+    errEl.textContent = 'Escribe tu correo y contraseña';
+    errEl.classList.add('show');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Entrando…';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.msg || 'Credenciales incorrectas');
+
+    accessToken = data.access_token;
+    headers.Authorization = 'Bearer ' + accessToken;
+
+    // Buscar el conductor ligado a esta cuenta
+    const driverRes = await fetch(`${SUPABASE_URL}/rest/v1/drivers?auth_user_id=eq.${data.user.id}&select=*`, { headers });
+    const driverRows = await driverRes.json();
+    if (!driverRows.length) throw new Error('Esta cuenta no está ligada a ningún conductor todavía');
+
+    DRIVER_ID = driverRows[0].id;
+    document.getElementById('login-screen').classList.add('hide');
+    document.getElementById('app').classList.add('show');
+    initMap();
+    loadDeliveries();
+    setInterval(loadDeliveries, 15000);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Iniciar sesión';
+  }
+}
+window.login = login;
 
 const STATUS_META = {
   pendiente:  { color:"#4A5262", bg:"rgba(139,147,163,0.12)", fg:"#9AA3B2", label:"Pendiente" },
@@ -463,9 +543,7 @@ async function markFailed(id) {
 }
 window.markFailed = markFailed;
 
-initMap();
-loadDeliveries();
-setInterval(loadDeliveries, 15000); // refresca cada 15s, simula tiempo real
+// La app arranca desde login() una vez el conductor inicia sesión con éxito.
 </script>
 </body>
 </html>

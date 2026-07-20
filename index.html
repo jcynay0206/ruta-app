@@ -154,6 +154,9 @@ function computeOptimizedRoute(activeStops) {
       navSteps = result.routes[0].legs.flatMap(leg => leg.steps);
       currentStepIndex = 0;
       if (navigationActive) updateNavPanel();
+    } else {
+      console.error('Directions API error:', status);
+      toast('Error de rutas: ' + status);
     }
   });
 }

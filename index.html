@@ -171,6 +171,10 @@ async function login() {
 
     // Buscar el conductor ligado a esta cuenta
     const driverRes = await fetch(`${SUPABASE_URL}/rest/v1/drivers?auth_user_id=eq.${data.user.id}&select=*`, { headers });
+    if (!driverRes.ok) {
+      const errBody = await driverRes.text();
+      throw new Error(`Error del servidor (${driverRes.status}): ${errBody}`);
+    }
     const driverRows = await driverRes.json();
     if (!driverRows.length) throw new Error('Esta cuenta no está ligada a ningún conductor todavía (ID: ' + data.user.id + ')');
 

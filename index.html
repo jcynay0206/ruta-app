@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RUTA — App del conductor</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14171C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RUTA">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC5Axkmkyq32XfhTyvtZDLu7GAEVx6HBao&libraries=geometry"></script>
 <style>
   :root {
@@ -504,10 +510,10 @@ window.clearSignature = clearSignature;
 async function uploadToStorage(path, blob, contentType) {
   const res = await fetch(`${SUPABASE_URL}/storage/v1/object/delivery-proofs/${path}`, {
     method: 'POST',
-    headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': contentType },
+    headers: { apikey: SUPABASE_KEY, Authorization: headers.Authorization, 'Content-Type': contentType },
     body: blob
   });
-  if (!res.ok) throw new Error('Upload failed: ' + await res.text());
+  if (!res.ok) throw new Error('Subida falló: ' + await res.text());
   return `${SUPABASE_URL}/storage/v1/object/public/delivery-proofs/${path}`;
 }
 
@@ -537,7 +543,8 @@ async function confirmDelivery(id, requiresSig) {
     expandedId = null;
     await loadDeliveries();
   } catch (err) {
-    toast('Error al subir la prueba — intenta de nuevo');
+    console.error('Error de entrega:', err);
+    toast('Error: ' + err.message);
     btn.disabled = false;
     btn.textContent = '✓ Confirmar entrega';
   }
@@ -561,6 +568,12 @@ async function markFailed(id) {
 window.markFailed = markFailed;
 
 // La app arranca desde login() una vez el conductor inicia sesión con éxito.
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>

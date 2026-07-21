@@ -105,6 +105,7 @@
   <div class="tabs">
     <button class="tab-btn active" data-tab="resumen" onclick="showTab('resumen')">Resumen</button>
     <button class="tab-btn" data-tab="conductores" onclick="showTab('conductores')">Conductores</button>
+    <button class="tab-btn" data-tab="entregas" onclick="showTab('entregas')">Entregas</button>
     <button class="tab-btn" data-tab="facturacion" onclick="showTab('facturacion')">Facturación</button>
   </div>
 </div>
@@ -131,6 +132,25 @@
     <div class="actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-amber" id="nd-submit" onclick="createDriver()">Crear</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-bg-delivery">
+  <div class="modal">
+    <h3>Nueva entrega</h3>
+    <label>Nombre de la parada</label>
+    <input id="nde-name" placeholder="Ej. Farmacia Rivas">
+    <label>Dirección completa</label>
+    <input id="nde-address" placeholder="Calle, ciudad, estado">
+    <label>Conductor asignado</label>
+    <select id="nde-driver" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:13.5px;color:var(--text)"></select>
+    <label>Nota especial (opcional)</label>
+    <input id="nde-note" placeholder="Ej. Frágil, Requiere firma">
+    <div class="form-error" id="nde-error"></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeDeliveryModal()">Cancelar</button>
+      <button class="btn btn-amber" id="nde-submit" onclick="createDelivery()">Crear</button>
     </div>
   </div>
 </div>
@@ -251,6 +271,19 @@ function render() {
       </div>
     </div>
 
+    <div class="panel" id="panel-entregas">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+        <button class="btn btn-amber" onclick="openDeliveryModal()">+ Nueva entrega</button>
+      </div>
+      <div class="box">
+        <table><thead><tr><th>Parada</th><th>Dirección</th><th>Conductor</th><th>Nota</th><th>Estado</th></tr></thead>
+        <tbody>${deliveries.map(d => {
+          const driverName = drivers.find(x => x.id === d.driver_id)?.name || '—';
+          return `<tr><td>${d.stop_name}</td><td>${d.address}</td><td>${driverName}</td><td>${d.special_note||'—'}</td><td><span class="pill ${d.status}">${d.status.replace('_',' ')}</span></td></tr>`;
+        }).join('')}</tbody></table>
+      </div>
+    </div>
+
     <div class="panel" id="panel-facturacion">
       <div class="cards" style="grid-template-columns:repeat(3,1fr)">
         <div class="card"><div class="icon-dot">💲</div><div class="value">$${revenue.toFixed(2)}</div><div class="label">Cobrado</div></div>
@@ -331,6 +364,77 @@ async function createDriver() {
   }
 }
 window.createDriver = createDriver;
+
+const GOOGLE_MAPS_KEY = "AIzaSyC5Axkmkyq32XfhTyvtZDLu7GAEVx6HBao";
+
+function openDeliveryModal() {
+  const select = document.getElementById('nde-driver');
+  select.innerHTML = drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+  document.getElementById('modal-bg-delivery').classList.add('show');
+}
+window.openDeliveryModal = openDeliveryModal;
+
+function closeDeliveryModal() {
+  document.getElementById('modal-bg-delivery').classList.remove('show');
+  document.getElementById('nde-error').classList.remove('show');
+}
+window.closeDeliveryModal = closeDeliveryModal;
+
+async function geocodeAddress(address) {
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_MAPS_KEY}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.status !== 'OK' || !data.results.length) {
+    throw new Error('No se encontró esa dirección (' + data.status + ')');
+  }
+  const loc = data.results[0].geometry.location;
+  return { lat: loc.lat, lng: loc.lng };
+}
+
+async function createDelivery() {
+  const stop_name = document.getElementById('nde-name').value.trim();
+  const address = document.getElementById('nde-address').value.trim();
+  const driver_id = document.getElementById('nde-driver').value;
+  const special_note = document.getElementById('nde-note').value.trim() || null;
+  const errEl = document.getElementById('nde-error');
+  const btn = document.getElementById('nde-submit');
+  errEl.classList.remove('show');
+
+  if (!stop_name || !address || !driver_id) {
+    errEl.textContent = 'Nombre, dirección y conductor son obligatorios';
+    errEl.classList.add('show');
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Ubicando dirección…';
+  try {
+    const { lat, lng } = await geocodeAddress(address);
+    btn.textContent = 'Guardando…';
+
+    const ownDeliveries = deliveries.filter(d => d.driver_id === driver_id);
+    const nextSequence = ownDeliveries.length + 1;
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/deliveries`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        agency_id: agency.id, driver_id, stop_name, address, special_note,
+        latitude: lat, longitude: lng, sequence: nextSequence, status: 'pendiente'
+      })
+    });
+    if (!res.ok) throw new Error('No se pudo guardar: ' + await res.text());
+
+    closeDeliveryModal();
+    ['nde-name','nde-address','nde-note'].forEach(id => document.getElementById(id).value = '');
+    await loadAll();
+    showTab('entregas');
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Crear';
+  }
+}
+window.createDelivery = createDelivery;
 
 // El panel arranca desde adminLogin() una vez que inicias sesión con éxito.
 </script>

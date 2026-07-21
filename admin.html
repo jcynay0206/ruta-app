@@ -65,10 +65,41 @@
   #loading, #error { padding:60px 24px; text-align:center; color:var(--muted); font-size:13px; }
   #error { color:var(--red); }
   canvas { max-height:200px; }
+
+  #login-screen { height:100vh; display:flex; align-items:center; justify-content:center; padding:0 24px; }
+  #login-screen.hide { display:none; }
+  .login-box { width:100%; max-width:300px; }
+  .login-box label { display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin-bottom:6px; margin-top:16px; }
+  .login-box input { width:100%; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:14px; color:var(--text); outline:none; }
+  .login-box input:focus { border-color:var(--amber); }
+  .login-box button { width:100%; margin-top:24px; padding:12px; border-radius:8px; background:var(--amber); color:var(--bg); font-weight:700; font-size:14px; border:none; }
+  .login-box button:disabled { opacity:0.6; }
+  .login-error { color:var(--red); font-size:12px; margin-top:10px; display:none; }
+  .login-error.show { display:block; }
+  #dashboard-shell { display:none; }
+  #dashboard-shell.show { display:block; }
 </style>
 </head>
 <body>
 
+<div id="login-screen">
+  <div class="login-box">
+    <div class="brand"><div class="mark">R</div><b>RUTA</b></div>
+    <p style="color:var(--muted);font-size:13px;margin-top:2px">Panel de agencia</p>
+
+    <label>Correo</label>
+    <input id="login-email" type="email" placeholder="tucorreo@agencia.com" autocomplete="username">
+
+    <label>Contraseña</label>
+    <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')adminLogin()">
+
+    <div class="login-error" id="login-error"></div>
+
+    <button id="login-btn" onclick="adminLogin()">Iniciar sesión</button>
+  </div>
+</div>
+
+<div id="dashboard-shell">
 <div class="topbar">
   <div class="brand"><div class="mark">R</div><b>RUTA</b><span style="color:var(--muted);font-size:11px;font-weight:700;margin-left:4px">AGENCIA</span></div>
   <div class="tabs">
@@ -80,6 +111,7 @@
 
 <div class="wrap" id="wrap">
   <div id="loading">Cargando datos de Supabase…</div>
+</div>
 </div>
 
 <div class="modal-bg" id="modal-bg">
@@ -106,8 +138,44 @@
 <script>
 const SUPABASE_URL = "https://zvuoxvvauxfluhimylfz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_66RQoNajgb8VjMLKcj6mwA_Yf_QlRwg";
-const AGENCY_ID = "11111111-1111-1111-1111-111111111111"; // Agencia Demo RUTA
-const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", Prefer: "return=representation" };
+let headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", Prefer: "return=representation" };
+
+async function adminLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  errEl.classList.remove('show');
+
+  if (!email || !password) {
+    errEl.textContent = 'Escribe tu correo y contraseña';
+    errEl.classList.add('show');
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Entrando…';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.msg || 'Credenciales incorrectas');
+
+    headers.Authorization = 'Bearer ' + data.access_token;
+    document.getElementById('login-screen').classList.add('hide');
+    document.getElementById('dashboard-shell').classList.add('show');
+    loadAll();
+    setInterval(loadAll, 15000);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Iniciar sesión';
+  }
+}
+window.adminLogin = adminLogin;
 
 async function sb(path) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers });
@@ -247,9 +315,9 @@ async function createDriver() {
     // 2. Crear su registro de conductor, ya ligado a su cuenta
     const driverRes = await fetch(`${SUPABASE_URL}/rest/v1/drivers`, {
       method: 'POST', headers,
-      body: JSON.stringify({ agency_id: AGENCY_ID, name, email, phone, vehicle, auth_user_id: signupData.user?.id || null })
+      body: JSON.stringify({ agency_id: agency.id, name, email, phone, vehicle, auth_user_id: signupData.user?.id || null })
     });
-    if (!driverRes.ok) throw new Error('Cuenta creada, pero no se pudo guardar el conductor');
+    if (!driverRes.ok) throw new Error('Cuenta creada, pero el conductor no se guardó: ' + await driverRes.text());
 
     closeModal();
     ['nd-name','nd-email','nd-phone','nd-vehicle','nd-password'].forEach(id => document.getElementById(id).value = '');
@@ -264,8 +332,7 @@ async function createDriver() {
 }
 window.createDriver = createDriver;
 
-loadAll();
-setInterval(loadAll, 15000);
+// El panel arranca desde adminLogin() una vez que inicias sesión con éxito.
 </script>
 </body>
 </html>

@@ -179,7 +179,7 @@ async function login() {
     document.getElementById('app').classList.add('show');
     initMap();
     loadDeliveries();
-    setInterval(loadDeliveries, 15000);
+    setInterval(() => loadDeliveries(true), 15000);
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.add('show');
@@ -355,7 +355,8 @@ function toast(msg) {
   setTimeout(() => el.classList.remove('show'), 2000);
 }
 
-async function loadDeliveries() {
+async function loadDeliveries(isAutoRefresh) {
+  if (isAutoRefresh && expandedId) return; // no interrumpir una captura de foto/firma en curso
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/deliveries?driver_id=eq.${DRIVER_ID}&order=sequence.asc`,
     { headers }
@@ -507,12 +508,39 @@ function clearSignature() {
 }
 window.clearSignature = clearSignature;
 
-async function uploadToStorage(path, blob, contentType) {
-  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/delivery-proofs/${path}`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_KEY, Authorization: headers.Authorization, 'Content-Type': contentType },
-    body: blob
+function compressImage(file, maxWidth = 1280, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('No se pudo comprimir la foto')), 'image/jpeg', quality);
+    };
+    img.onerror = () => reject(new Error('No se pudo leer la foto'));
+    img.src = URL.createObjectURL(file);
   });
+}
+
+function fetchWithTimeout(url, options, ms = 25000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+async function uploadToStorage(path, blob, contentType) {
+  let res;
+  try {
+    res = await fetchWithTimeout(`${SUPABASE_URL}/storage/v1/object/delivery-proofs/${path}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, Authorization: headers.Authorization, 'Content-Type': contentType },
+      body: blob
+    });
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? 'La subida tardó demasiado — revisa tu conexión' : 'Sin conexión con Supabase');
+  }
   if (!res.ok) throw new Error('Subida falló: ' + await res.text());
   return `${SUPABASE_URL}/storage/v1/object/public/delivery-proofs/${path}`;
 }
@@ -526,7 +554,8 @@ async function confirmDelivery(id, requiresSig) {
   btn.disabled = true;
   btn.textContent = 'Subiendo…';
   try {
-    const photoUrl = await uploadToStorage(`${id}-photo-${Date.now()}.jpg`, capturedPhotoBlob, capturedPhotoBlob.type || 'image/jpeg');
+    const compressed = await compressImage(capturedPhotoBlob);
+    const photoUrl = await uploadToStorage(`${id}-photo-${Date.now()}.jpg`, compressed, 'image/jpeg');
     let signatureUrl = null;
     if (requiresSig) {
       const canvas = document.getElementById('sig-canvas');

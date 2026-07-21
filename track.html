@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUTA — Rastrea tu entrega</title>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC5Axkmkyq32XfhTyvtZDLu7GAEVx6HBao&libraries=geometry"></script>
+<style>
+  :root {
+    --bg:#14171C; --card:#1C2127; --card2:#242A34; --border:#2A303B;
+    --amber:#FF9E2C; --green:#33C17A; --red:#E5484D; --text:#F2EFE9; --muted:#8B93A3;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
+  html,body { height:100%; background:var(--bg); color:var(--text); }
+  #app { max-width:480px; margin:0 auto; height:100%; display:flex; flex-direction:column; }
+
+  header { padding:16px; display:flex; align-items:center; gap:8px; }
+  header .mark { width:26px; height:26px; border-radius:7px; background:var(--amber); display:flex; align-items:center; justify-content:center; font-weight:900; color:var(--bg); font-size:13px; }
+  header b { font-weight:900; font-size:15px; letter-spacing:-0.02em; }
+
+  #map { height:260px; width:100%; filter: saturate(0.6) brightness(0.85); }
+
+  .status-card { margin:16px; padding:18px; border-radius:16px; background:var(--card); border:1px solid var(--border); }
+  .status-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; padding:5px 12px; border-radius:20px; margin-bottom:14px; }
+  .dot-pulse { width:7px; height:7px; border-radius:50%; }
+  .status-title { font-size:20px; font-weight:800; margin-bottom:6px; }
+  .status-sub { font-size:13px; color:var(--muted); line-height:1.5; }
+
+  .stop-detail { margin:0 16px 16px; padding:16px; border-radius:14px; background:var(--card); border:1px solid var(--border); }
+  .stop-detail .row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); }
+  .stop-detail .row:last-child { border-bottom:none; }
+  .stop-detail .label { font-size:12px; color:var(--muted); }
+  .stop-detail .value { font-size:13px; font-weight:600; text-align:right; }
+
+  .proof-thumb { margin:0 16px 16px; }
+  .proof-thumb img { width:100%; border-radius:14px; border:1px solid var(--border); }
+
+  #loading, #error { flex:1; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--muted); font-size:13px; }
+  #error { color:var(--red); }
+  .footer-note { text-align:center; font-size:11px; color:#5A6272; padding:20px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><div class="mark">R</div><b>RUTA</b></header>
+  <div id="content"><div id="loading">Cargando tu entrega…</div></div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://zvuoxvvauxfluhimylfz.supabase.co";
+const SUPABASE_KEY = "sb_publishable_66RQoNajgb8VjMLKcj6mwA_Yf_QlRwg";
+const headers = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
+
+const STATUS_INFO = {
+  pendiente: { title: "Tu pedido está preparado", sub: "Todavía no ha salido para entrega. Te avisaremos apenas el conductor esté en camino.", color: "#8B93A3", bg: "rgba(139,147,163,0.12)" },
+  en_camino: { title: "¡Tu conductor va en camino!", sub: "Puedes ver su ubicación en vivo en el mapa de abajo.", color: "#FF9E2C", bg: "rgba(255,158,44,0.12)" },
+  entregado: { title: "Entregado ✓", sub: "Tu pedido fue entregado con éxito.", color: "#33C17A", bg: "rgba(51,193,122,0.12)" },
+  fallido: { title: "No se pudo entregar", sub: "Hubo un problema con la entrega. Nos pondremos en contacto contigo pronto.", color: "#E5484D", bg: "rgba(229,72,77,0.12)" }
+};
+
+function getToken() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('t');
+}
+
+let map, driverMarker, destMarker;
+
+async function loadTracking() {
+  const token = getToken();
+  if (!token) {
+    document.getElementById('content').innerHTML = '<div id="error">Este link no es válido.</div>';
+    return;
+  }
+
+  try {
+    const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/tracking_links?token=eq.${token}&select=delivery_id,expires_at`, { headers });
+    const links = await linkRes.json();
+    if (!links.length) throw new Error('Link no encontrado o vencido');
+    const { delivery_id, expires_at } = links[0];
+    if (new Date(expires_at) < new Date()) throw new Error('Este link de rastreo ya venció');
+
+    const deliveryRes = await fetch(`${SUPABASE_URL}/rest/v1/deliveries?id=eq.${delivery_id}&select=*`, { headers });
+    const deliveries = await deliveryRes.json();
+    if (!deliveries.length) throw new Error('Entrega no encontrada');
+    const delivery = deliveries[0];
+
+    let driver = null;
+    if (delivery.driver_id) {
+      const driverRes = await fetch(`${SUPABASE_URL}/rest/v1/drivers?id=eq.${delivery.driver_id}&select=name,current_lat,current_lng,location_updated_at`, { headers });
+      const driverRows = await driverRes.json();
+      driver = driverRows[0] || null;
+    }
+
+    render(delivery, driver);
+  } catch (err) {
+    document.getElementById('content').innerHTML = `<div id="error">${err.message}</div>`;
+  }
+}
+
+function render(delivery, driver) {
+  const info = STATUS_INFO[delivery.status] || STATUS_INFO.pendiente;
+  const showMap = delivery.status === 'en_camino' && driver && driver.current_lat != null;
+
+  document.getElementById('content').innerHTML = `
+    ${showMap ? '<div id="map"></div>' : ''}
+    <div class="status-card">
+      <span class="status-badge" style="background:${info.bg};color:${info.color}">
+        <span class="dot-pulse" style="background:${info.color}"></span>
+        ${delivery.status.replace('_',' ')}
+      </span>
+      <div class="status-title">${info.title}</div>
+      <div class="status-sub">${info.sub}</div>
+    </div>
+    <div class="stop-detail">
+      <div class="row"><span class="label">Entrega</span><span class="value">${delivery.stop_name}</span></div>
+      <div class="row"><span class="label">Dirección</span><span class="value">${delivery.address}</span></div>
+      ${driver ? `<div class="row"><span class="label">Conductor</span><span class="value">${driver.name}</span></div>` : ''}
+    </div>
+    ${delivery.status === 'entregado' && delivery.photo_url ? `
+      <div class="proof-thumb"><img src="${delivery.photo_url}" alt="Prueba de entrega"></div>
+    ` : ''}
+    <div class="footer-note">Hecho con amor. Llevado en tu nombre. — RUTA</div>
+  `;
+
+  if (showMap) {
+    initMapIfNeeded();
+    const pos = { lat: driver.current_lat, lng: driver.current_lng };
+    const destPos = { lat: delivery.latitude, lng: delivery.longitude };
+    if (!driverMarker) {
+      driverMarker = new google.maps.Marker({ position: pos, map, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: '#4285F4', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 } });
+      destMarker = new google.maps.Marker({ position: destPos, map, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: '#FF9E2C', fillOpacity: 1, strokeColor: '#14171C', strokeWeight: 2 } });
+      const bounds = new google.maps.LatLngBounds();
+      bounds.extend(pos); bounds.extend(destPos);
+      map.fitBounds(bounds, 50);
+    } else {
+      driverMarker.setPosition(pos);
+    }
+  }
+}
+
+function initMapIfNeeded() {
+  if (map) return;
+  map = new google.maps.Map(document.getElementById('map'), {
+    zoom: 13, disableDefaultUI: true,
+    styles: [
+      { elementType: "geometry", stylers: [{ color: "#1C2127" }] },
+      { elementType: "labels.text.fill", stylers: [{ color: "#8B93A3" }] },
+      { elementType: "labels.text.stroke", stylers: [{ color: "#14171C" }] },
+      { featureType: "road", elementType: "geometry", stylers: [{ color: "#2A303B" }] },
+      { featureType: "water", elementType: "geometry", stylers: [{ color: "#101418" }] },
+      { featureType: "poi", stylers: [{ visibility: "off" }] }
+    ]
+  });
+}
+
+loadTracking();
+setInterval(loadTracking, 10000);
+</script>
+</body>
+</html>

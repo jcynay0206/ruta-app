@@ -286,6 +286,8 @@ function onGpsError() {
   document.getElementById('nav-step-meta').textContent = 'Sin señal de GPS — verifica permisos de ubicación';
 }
 
+let lastLocationPush = 0;
+
 function onGpsUpdate(pos) {
   const here = new google.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
 
@@ -298,6 +300,21 @@ function onGpsUpdate(pos) {
     });
   } else {
     driverDot.setPosition(here);
+  }
+
+  // Transmitir ubicación real a Supabase cada ~10s para el portal de tracking del cliente
+  const now = Date.now();
+  if (now - lastLocationPush > 10000 && DRIVER_ID) {
+    lastLocationPush = now;
+    fetch(`${SUPABASE_URL}/rest/v1/drivers?id=eq.${DRIVER_ID}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        current_lat: pos.coords.latitude,
+        current_lng: pos.coords.longitude,
+        location_updated_at: new Date().toISOString()
+      })
+    }).catch(() => {});
   }
 
   // Auto-advance to next instruction when close to the end of the current step

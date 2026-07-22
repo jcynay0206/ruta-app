@@ -102,12 +102,13 @@
 
 <div id="dashboard-shell">
 <div class="topbar">
-  <div class="brand"><div class="mark">R</div><b>RUTA</b><span style="color:var(--muted);font-size:11px;font-weight:700;margin-left:4px">AGENCIA</span></div>
+  <div class="brand"><div class="mark">R</div><b>RUTA</b></div>
   <div class="tabs">
     <button class="tab-btn active" data-tab="resumen" onclick="showTab('resumen')">Resumen</button>
     <button class="tab-btn" data-tab="conductores" onclick="showTab('conductores')">Conductores</button>
     <button class="tab-btn" data-tab="entregas" onclick="showTab('entregas')">Entregas</button>
     <button class="tab-btn" data-tab="facturacion" onclick="showTab('facturacion')">Facturación</button>
+    <button class="tab-btn" data-tab="agencia" onclick="showTab('agencia')">Agencia</button>
   </div>
 </div>
 
@@ -254,6 +255,7 @@ function render() {
   const delivered = deliveries.filter(d => d.status === 'entregado').length;
   const failed = deliveries.filter(d => d.status === 'fallido').length;
   const activeDrivers = drivers.filter(d => driverStats(d).status !== 'sin_iniciar').length;
+  const activeDriverCount = drivers.filter(d => d.active !== false).length;
   const revenue = invoices.filter(i => i.status === 'pagado').reduce((s,i) => s + Number(i.amount), 0);
   const pending = invoices.filter(i => i.status === 'pendiente').reduce((s,i) => s + Number(i.amount), 0);
   const overdue = invoices.filter(i => i.status === 'vencido').reduce((s,i) => s + Number(i.amount), 0);
@@ -266,7 +268,21 @@ function render() {
         <div class="card"><div class="icon-dot">💲</div><div class="value">$${revenue.toFixed(2)}</div><div class="label">Ingresos cobrados</div></div>
         <div class="card"><div class="icon-dot">✕</div><div class="value">${failed}</div><div class="label">Entregas fallidas</div></div>
       </div>
-      <div class="box"><h3>Entregas por día</h3><canvas id="chart"></canvas></div>
+      <div class="box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h3 style="margin:0">Entregas por periodo</h3>
+          <select id="period-select" onchange="renderTrendChart()" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12.5px;color:var(--text)">
+            <option value="day">Por día (semana actual)</option>
+            <option value="week">Por semana (mes actual)</option>
+            <option value="month">Por mes (año actual)</option>
+          </select>
+        </div>
+        <canvas id="chart"></canvas>
+      </div>
+      <div class="box">
+        <h3>% de entregas completadas por conductor</h3>
+        <canvas id="driver-chart"></canvas>
+      </div>
       <div class="box">
         <h3>Conductores</h3>
         <table><thead><tr><th>Conductor</th><th>Vehículo</th><th>Progreso</th><th>Estado</th></tr></thead>
@@ -280,16 +296,17 @@ function render() {
     <div class="panel" id="panel-conductores">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-size:13px;color:var(--muted)">
-          <b style="color:var(--text)">${drivers.length} de ${planLimit(agency?.plan)}</b> conductores — plan <span style="text-transform:capitalize">${agency?.plan || '—'}</span>
+          <b style="color:var(--text)">${activeDriverCount} de ${planLimit(agency?.plan)}</b> conductores activos — plan <span style="text-transform:capitalize">${agency?.plan || '—'}</span>
         </div>
-        <button class="btn btn-amber" onclick="openModal()" ${drivers.length >= planLimit(agency?.plan) ? 'disabled title="Límite de tu plan alcanzado"' : ''}>+ Agregar conductor</button>
+        <button class="btn btn-amber" onclick="openModal()" ${activeDriverCount >= planLimit(agency?.plan) ? 'disabled title="Límite de tu plan alcanzado"' : ''}>+ Agregar conductor</button>
       </div>
-      ${drivers.length >= planLimit(agency?.plan) ? `<div class="box" style="border-color:var(--amber);margin-bottom:14px"><span style="color:var(--amber);font-size:13px;font-weight:600">Llegaste al límite de tu plan actual. Sube de plan para agregar más conductores.</span></div>` : ''}
+      ${activeDriverCount >= planLimit(agency?.plan) ? `<div class="box" style="border-color:var(--amber);margin-bottom:14px"><span style="color:var(--amber);font-size:13px;font-weight:600">Llegaste al límite de tu plan actual. Sube de plan para agregar más conductores.</span></div>` : ''}
       <div class="box">
-        <table><thead><tr><th>Conductor</th><th>Correo</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th></tr></thead>
+        <table><thead><tr><th>Conductor</th><th>Correo</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th><th></th></tr></thead>
         <tbody>${drivers.map(d => {
           const s = driverStats(d);
-          return `<tr><td>${d.name}</td><td>${d.email||'—'}</td><td>${d.phone||'—'}</td><td>${d.vehicle||'—'}</td><td><span class="pill ${s.status}">${s.status.replace('_',' ')}</span></td></tr>`;
+          const isActive = d.active !== false;
+          return `<tr${isActive ? '' : ' style="opacity:0.5"'}><td>${d.name}</td><td>${d.email||'—'}</td><td>${d.phone||'—'}</td><td>${d.vehicle||'—'}</td><td><span class="pill ${isActive ? s.status : 'sin_iniciar'}">${isActive ? s.status.replace('_',' ') : 'inactivo'}</span></td><td><button class="btn btn-ghost" style="padding:5px 10px;font-size:11.5px" onclick="toggleDriverActive('${d.id}', ${isActive})">${isActive ? 'Desactivar' : 'Reactivar'}</button></td></tr>`;
         }).join('')}</tbody></table>
       </div>
     </div>
@@ -309,6 +326,15 @@ function render() {
     </div>
 
     <div class="panel" id="panel-facturacion">
+      <div class="box" style="margin-bottom:18px">
+        <h3>Tu plan actual: <span style="text-transform:capitalize;color:var(--amber)">${agency?.plan || '—'}</span></h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn btn-ghost" onclick="upgradePlan('starter')">Cambiar a Starter — $49/mes</button>
+          <button class="btn btn-ghost" onclick="upgradePlan('pro')">Cambiar a Pro — $149/mes</button>
+          <button class="btn btn-ghost" onclick="upgradePlan('elite')">Cambiar a Elite — $349/mes</button>
+        </div>
+        <div class="form-error" id="upgrade-error"></div>
+      </div>
       <div class="cards" style="grid-template-columns:repeat(3,1fr)">
         <div class="card"><div class="icon-dot">💲</div><div class="value">$${revenue.toFixed(2)}</div><div class="label">Cobrado</div></div>
         <div class="card"><div class="icon-dot">🕐</div><div class="value">$${pending.toFixed(2)}</div><div class="label">Pendiente</div></div>
@@ -319,16 +345,88 @@ function render() {
         <tbody>${invoices.map(i => `<tr><td>${i.period}</td><td>$${Number(i.amount).toFixed(2)}</td><td>${new Date(i.due_date).toLocaleDateString('es-ES',{day:'numeric',month:'short'})}</td><td><span class="pill ${i.status}">${i.status}</span></td></tr>`).join('')}</tbody></table>
       </div>
     </div>
+
+    <div class="panel" id="panel-agencia">
+      <div class="box" style="max-width:400px">
+        <h3>Datos de la agencia</h3>
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin:12px 0 5px">Nombre de la agencia</label>
+        <input id="ag-name" value="${agency?.name || ''}" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:13.5px;color:var(--text)">
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin:12px 0 5px">Correo de contacto</label>
+        <input id="ag-email" value="${agency?.contact_email || ''}" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:13.5px;color:var(--text)">
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin:12px 0 5px">Teléfono de contacto</label>
+        <input id="ag-phone" value="${agency?.contact_phone || ''}" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:13.5px;color:var(--text)">
+        <div class="form-error" id="ag-error"></div>
+        <button class="btn btn-amber" style="margin-top:16px" onclick="saveAgency()">Guardar cambios</button>
+      </div>
+    </div>
   `;
 
-  const chartMap = {};
-  deliveries.forEach(d => { const day = WEEKDAY[new Date(d.created_at).getDay()]; chartMap[day] = (chartMap[day]||0)+1; });
-  new Chart(document.getElementById('chart'), {
+  if (document.getElementById('chart')) {
+    renderTrendChart();
+    renderDriverChart();
+  }
+}
+
+let trendChartInstance = null;
+function renderTrendChart() {
+  const period = document.getElementById('period-select')?.value || 'day';
+  const canvas = document.getElementById('chart');
+  if (!canvas) return;
+
+  let labels, counts;
+  if (period === 'day') {
+    labels = WEEKDAY;
+    counts = new Array(7).fill(0);
+    deliveries.forEach(d => counts[new Date(d.created_at).getDay()]++);
+  } else if (period === 'week') {
+    labels = ['Semana 1','Semana 2','Semana 3','Semana 4','Semana 5'];
+    counts = new Array(5).fill(0);
+    deliveries.forEach(d => {
+      const date = new Date(d.created_at);
+      const weekOfMonth = Math.ceil(date.getDate() / 7) - 1;
+      if (weekOfMonth >= 0 && weekOfMonth < 5) counts[weekOfMonth]++;
+    });
+  } else {
+    labels = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    counts = new Array(12).fill(0);
+    deliveries.forEach(d => counts[new Date(d.created_at).getMonth()]++);
+  }
+
+  if (trendChartInstance) trendChartInstance.destroy();
+  trendChartInstance = new Chart(canvas, {
     type: 'line',
-    data: { labels: WEEKDAY, datasets: [{ data: WEEKDAY.map(d => chartMap[d]||0), borderColor: '#FF9E2C', backgroundColor: 'rgba(255,158,44,0.1)', tension: 0.3, fill: true }] },
+    data: { labels, datasets: [{ data: counts, borderColor: '#FF9E2C', backgroundColor: 'rgba(255,158,44,0.1)', tension: 0.3, fill: true }] },
     options: { plugins: { legend: { display: false } }, scales: { x: { ticks:{color:'#8B93A3'}, grid:{color:'#2A303B'} }, y: { ticks:{color:'#8B93A3'}, grid:{color:'#2A303B'} } } }
   });
 }
+window.renderTrendChart = renderTrendChart;
+
+let driverChartInstance = null;
+function renderDriverChart() {
+  const canvas = document.getElementById('driver-chart');
+  if (!canvas) return;
+
+  const activeOnes = drivers.filter(d => d.active !== false);
+  const labels = activeOnes.map(d => d.name);
+  const rates = activeOnes.map(d => {
+    const s = driverStats(d);
+    return s.stops ? Math.round((s.done / s.stops) * 100) : 0;
+  });
+
+  if (driverChartInstance) driverChartInstance.destroy();
+  driverChartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets: [{ data: rates, backgroundColor: '#FF9E2C', borderRadius: 6 }] },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ctx.parsed.y + '% completado' } } },
+      scales: {
+        x: { ticks: { color: '#8B93A3' }, grid: { display: false } },
+        y: { ticks: { color: '#8B93A3', callback: (v) => v + '%' }, grid: { color: '#2A303B' }, min: 0, max: 100 }
+      }
+    }
+  });
+}
+window.renderDriverChart = renderDriverChart;
 
 function showTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -462,6 +560,65 @@ async function createDelivery() {
   }
 }
 window.createDelivery = createDelivery;
+
+async function upgradePlan(plan) {
+  const errEl = document.getElementById('upgrade-error');
+  errEl.classList.remove('show');
+  try {
+    const res = await fetch('/api/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan, agencyId: agency.id, agencyEmail: agency.contact_email })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo iniciar el pago');
+    window.location.href = data.url;
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('show');
+  }
+}
+window.upgradePlan = upgradePlan;
+
+async function toggleDriverActive(driverId, currentlyActive) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/drivers?id=eq.${driverId}`, {
+    method: 'PATCH', headers,
+    body: JSON.stringify({ active: !currentlyActive })
+  });
+  if (res.ok) {
+    await loadAll();
+  } else {
+    alert('No se pudo actualizar el conductor: ' + await res.text());
+  }
+}
+window.toggleDriverActive = toggleDriverActive;
+
+async function saveAgency() {
+  const name = document.getElementById('ag-name').value.trim();
+  const contact_email = document.getElementById('ag-email').value.trim();
+  const contact_phone = document.getElementById('ag-phone').value.trim();
+  const errEl = document.getElementById('ag-error');
+  errEl.classList.remove('show');
+
+  if (!name) {
+    errEl.textContent = 'El nombre de la agencia es obligatorio';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/agencies?id=eq.${agency.id}`, {
+    method: 'PATCH', headers,
+    body: JSON.stringify({ name, contact_email, contact_phone })
+  });
+  if (res.ok) {
+    await loadAll();
+    showTab('agencia');
+  } else {
+    errEl.textContent = 'No se pudo guardar: ' + await res.text();
+    errEl.classList.add('show');
+  }
+}
+window.saveAgency = saveAgency;
 
 // El panel arranca desde adminLogin() una vez que inicias sesión con éxito.
 </script>

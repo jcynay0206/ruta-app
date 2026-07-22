@@ -207,6 +207,24 @@ async function sb(path) {
 let agency = null, drivers = [], deliveries = [], invoices = [];
 const WEEKDAY = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 
+const PLAN_LIMITS = { prueba: 1, starter: 3, pro: 10, elite: 25, enterprise: Infinity };
+function planLimit(plan) { return PLAN_LIMITS[plan] ?? 1; }
+
+function renderDeliveryRows(list) {
+  return list.map(d => {
+    const driverName = drivers.find(x => x.id === d.driver_id)?.name || '—';
+    return `<tr><td>${d.stop_name}</td><td>${d.address}</td><td>${driverName}</td><td>${d.special_note||'—'}</td><td><span class="pill ${d.status}">${d.status.replace('_',' ')}</span></td></tr>`;
+  }).join('');
+}
+
+function renderDeliveriesTable() {
+  const filterId = document.getElementById('driver-filter')?.value || '';
+  const filtered = filterId ? deliveries.filter(d => d.driver_id === filterId) : deliveries;
+  const tbody = document.getElementById('deliveries-tbody');
+  if (tbody) tbody.innerHTML = renderDeliveryRows(filtered);
+}
+window.renderDeliveriesTable = renderDeliveriesTable;
+
 async function loadAll() {
   try {
     [agency, drivers, deliveries, invoices] = await Promise.all([
@@ -260,9 +278,13 @@ function render() {
     </div>
 
     <div class="panel" id="panel-conductores">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-        <button class="btn btn-amber" onclick="openModal()">+ Agregar conductor</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:13px;color:var(--muted)">
+          <b style="color:var(--text)">${drivers.length} de ${planLimit(agency?.plan)}</b> conductores — plan <span style="text-transform:capitalize">${agency?.plan || '—'}</span>
+        </div>
+        <button class="btn btn-amber" onclick="openModal()" ${drivers.length >= planLimit(agency?.plan) ? 'disabled title="Límite de tu plan alcanzado"' : ''}>+ Agregar conductor</button>
       </div>
+      ${drivers.length >= planLimit(agency?.plan) ? `<div class="box" style="border-color:var(--amber);margin-bottom:14px"><span style="color:var(--amber);font-size:13px;font-weight:600">Llegaste al límite de tu plan actual. Sube de plan para agregar más conductores.</span></div>` : ''}
       <div class="box">
         <table><thead><tr><th>Conductor</th><th>Correo</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th></tr></thead>
         <tbody>${drivers.map(d => {
@@ -273,15 +295,16 @@ function render() {
     </div>
 
     <div class="panel" id="panel-entregas">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <select id="driver-filter" onchange="renderDeliveriesTable()" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text)">
+          <option value="">Ver: todos los conductores</option>
+          ${drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+        </select>
         <button class="btn btn-amber" onclick="openDeliveryModal()">+ Nueva entrega</button>
       </div>
       <div class="box">
         <table><thead><tr><th>Parada</th><th>Dirección</th><th>Conductor</th><th>Nota</th><th>Estado</th></tr></thead>
-        <tbody>${deliveries.map(d => {
-          const driverName = drivers.find(x => x.id === d.driver_id)?.name || '—';
-          return `<tr><td>${d.stop_name}</td><td>${d.address}</td><td>${driverName}</td><td>${d.special_note||'—'}</td><td><span class="pill ${d.status}">${d.status.replace('_',' ')}</span></td></tr>`;
-        }).join('')}</tbody></table>
+        <tbody id="deliveries-tbody">${renderDeliveryRows(deliveries)}</tbody></table>
       </div>
     </div>
 

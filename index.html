@@ -177,6 +177,7 @@ async function login() {
     }
     const driverRows = await driverRes.json();
     if (!driverRows.length) throw new Error('Esta cuenta no está ligada a ningún conductor todavía (ID: ' + data.user.id + ')');
+    if (driverRows[0].active === false) throw new Error('Tu cuenta fue desactivada por tu agencia. Contáctalos para más información.');
 
     DRIVER_ID = driverRows[0].id;
     document.getElementById('login-screen').classList.add('hide');
